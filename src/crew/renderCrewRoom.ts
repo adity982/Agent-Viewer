@@ -11,6 +11,7 @@ import { drawCrewSprite, type CrewSpriteBlink } from './crewSpriteLayer';
 import { drawCrewPresenceBadge } from './crewHudLayer';
 import { drawCrewCallOverlay, type CrewCallOverlayStyle } from './crewCallLayer';
 import { CREW_PROP_IMAGE_SIZE, CREW_ROOM_PROP_IMAGES, type CrewPropImageId } from './crewPropImages';
+import { crewIsPointCulled, crewVisibleLocalBounds } from './crewCulling';
 
 /**
  * A standalone 2.5D Crew renderer prototype.
@@ -114,17 +115,23 @@ export function renderCrewRoom({ ctx, width, height, room, camera, markers = [],
     const facing = marker && crewSpriteView(marker, view);
     return marker && facing && sprites[facing] && actions[marker.id] && !walks[marker.id];
   }) : [];
+  // Culling de actores y mobiliario fuera de vista (issue #158, "batch/culling de
+  // actores/partículas"): el área visible se calcula una sola vez por cuadro, en el
+  // mismo espacio local que `point` (post `crewIsoPoint`), y cada item fuera de ella
+  // se descarta antes de ordenar y de dibujar, sin emitir ningún `drawImage`/`fillText`.
+  const visibleBounds = crewVisibleLocalBounds(width, height, fit, zoom, pan, { x: bounds.centerX, y: bounds.centerY });
   const visible = [
     ...room.furniture.filter(item => !fitted.some(seat => item.id === seat.deskId || item.id === seat.chairId)).map(item => {
       const seat = seats.find(station => station.chairId === item.id);
       const p = crewProject(seat?.x ?? item.x,seat?.y ?? item.y,room,view);
-      return {x:p.x,y:p.y,draw:()=>drawCrewProp(ctx, item, p.x, p.y, view, crewIsoPoint, highContrast,
+      const point = crewIsoPoint(p.x, p.y);
+      return {x:p.x,y:p.y,point,draw:()=>drawCrewProp(ctx, item, p.x, p.y, view, crewIsoPoint, highContrast,
         resolveCrewPropImage(item.id, propImages))};
     }),
     ...markers.map(marker => {
       const p = crewProject(marker.x,marker.y,room,view);
-      return {x:p.x,y:p.y,draw:()=>{
-        const point = crewIsoPoint(p.x,p.y);
+      const point = crewIsoPoint(p.x,p.y);
+      return {x:p.x,y:p.y,point,draw:()=>{
         const direction = crewSpriteView(marker, view);
         const seat = fitted.find(item => item.actorId === marker.id);
         let spriteDrawn: boolean;
@@ -137,7 +144,9 @@ export function renderCrewRoom({ ctx, width, height, room, camera, markers = [],
         if (call) drawCrewCallOverlay(ctx, point, spriteDrawn, { ...call, icon: callIcon });
       }};
     }),
-  ].sort((a,b)=>(a.x+a.y)-(b.x+b.y));
+  ]
+    .filter(entry => !crewIsPointCulled(entry.point, visibleBounds))
+    .sort((a,b)=>(a.x+a.y)-(b.x+b.y));
   for (const item of visible) item.draw();
   ctx.restore();
 }
