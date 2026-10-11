@@ -1,3 +1,4 @@
+import { drawCrewWorkstation } from './crewWorkstationLayer';
 import { crewProject, type CrewRoomDefinition, type CrewView } from './crewModel';
 import type { CrewWorkstation } from './crewActorActions';
 import type { CrewPresenceMarker } from './crewPresence';
@@ -36,6 +37,7 @@ export interface CrewRenderInput {
   blink?: CrewSpriteBlink;
   /** Tema de alto contraste de la preferencia de accesibilidad Crew (#157). */
   highContrast?: boolean;
+  workstationImage?: HTMLImageElement;
   seats?: readonly CrewWorkstation[];
   actions?: Readonly<Record<string, CrewSpriteBlink | undefined>>;
   walks?: Readonly<Record<string, CrewSpriteBlink | undefined>>;
@@ -89,7 +91,7 @@ export function crewFitScale(room: CrewRoomDefinition, view: CrewView, width: nu
 }
 
 /** Render only this room, with no clock, fake agents, usage or side-effects. */
-export function renderCrewRoom({ ctx, width, height, room, camera, markers = [], sprites = {}, blink, highContrast = false, walks = {}, actions = {}, propImages, seats = [], calls = {}, callIcon }: CrewRenderInput): void {
+export function renderCrewRoom({ ctx, width, height, room, camera, markers = [], sprites = {}, blink, highContrast = false, walks = {}, actions = {}, propImages, seats = [], workstationImage, calls = {}, callIcon }: CrewRenderInput): void {
   const { view, zoom, pan } = camera;
   const roomSize = crewViewSize(room, view);
   const bounds = crewGeometryBounds(room, view);
@@ -107,8 +109,13 @@ export function renderCrewRoom({ ctx, width, height, room, camera, markers = [],
 
   // Project every furniture anchor and marker from ORIGINAL room-local coordinates;
   // sorted by rotated depth so props and actors interleave correctly in 2.5D.
+  const fitted = workstationImage && room.id === 'ceo' ? seats.filter(seat => {
+    const marker = markers.find(item => item.id === seat.actorId);
+    const facing = marker && crewSpriteView(marker, view);
+    return marker && facing && sprites[facing] && actions[marker.id] && !walks[marker.id];
+  }) : [];
   const visible = [
-    ...room.furniture.map(item => {
+    ...room.furniture.filter(item => !fitted.some(seat => item.id === seat.deskId || item.id === seat.chairId)).map(item => {
       const seat = seats.find(station => station.chairId === item.id);
       const p = crewProject(seat?.x ?? item.x,seat?.y ?? item.y,room,view);
       return {x:p.x,y:p.y,draw:()=>drawCrewProp(ctx, item, p.x, p.y, view, crewIsoPoint, highContrast,
@@ -119,7 +126,12 @@ export function renderCrewRoom({ ctx, width, height, room, camera, markers = [],
       return {x:p.x,y:p.y,draw:()=>{
         const point = crewIsoPoint(p.x,p.y);
         const direction = crewSpriteView(marker, view);
-        const spriteDrawn = drawCrewSprite(ctx, point, direction, sprites, blink, walks[marker.id], actions[marker.id]);
+        const seat = fitted.find(item => item.actorId === marker.id);
+        let spriteDrawn: boolean;
+        if (seat && direction && workstationImage) {
+          drawCrewWorkstation(ctx, point, direction, workstationImage, sprites, actions[marker.id]!);
+          spriteDrawn = true;
+        } else spriteDrawn = drawCrewSprite(ctx, point, direction, sprites, blink, walks[marker.id], actions[marker.id]);
         drawCrewPresenceBadge(ctx, point, marker, spriteDrawn);
         const call = calls[marker.id];
         if (call) drawCrewCallOverlay(ctx, point, spriteDrawn, { ...call, icon: callIcon });
