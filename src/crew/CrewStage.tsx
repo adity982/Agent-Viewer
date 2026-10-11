@@ -30,7 +30,7 @@ import { crewTheme } from './crewContrast';
 import { useCrewAudio } from './useCrewAudio';
 import type { CrewAudioState } from './crewAudioEngine';
 import { CrewGestures } from './crewGestures';
-import { crewAgentActivity, crewActivityLine, crewInPhoneCall, crewViewerModeLabel, type CrewViewerMode, type CrewVisibility } from './crewEventBridge';
+import { crewAgentActivity, crewActivityLine, crewInPhoneCall, crewSafeStatusText, crewViewerModeLabel, type CrewViewerMode, type CrewVisibility } from './crewEventBridge';
 import {
   advanceCrewCallTimeline, crewCallElapsedMs, crewCallOpacity, crewCallPhase, dismissCrewCall,
   formatCrewCallElapsed, type CrewCallTimelineState,
@@ -454,6 +454,10 @@ export function CrewStage({ locale = 'es', agents = EMPTY_CREW_AGENTS, tasks = [
         // aprobación, herramienta) sin inventar nada ni recalcular tokens/costo.
         const activity = crewAgentActivity(agent, tasks, meetings, visibility);
         const activityLine = crewActivityLine(activity, isEs);
+        // Redacción de statusText en modo minimizado (#155): el tooltip nativo del botón usa el
+        // statusText real de Agent (mismo campo que Caricatura) solo si la pantalla es `full`; en
+        // `minimized` nunca lo expone, se sustituye por la categoría honesta de crewEventBridge.
+        const safeStatusText = crewSafeStatusText(agent.statusText, activity, crewInPhoneCall(agent), visibility, isEs);
         // Aviso de llamada (#145): mini línea de tiempo local al agente, con botón para
         // descartarlo. "Descartar" solo oculta el aviso visual; Crew no tiene un canal
         // real para colgar la llamada en el proveedor, así que nunca lo da a entender.
@@ -467,6 +471,7 @@ export function CrewStage({ locale = 'es', agents = EMPTY_CREW_AGENTS, tasks = [
         return <span key={agent.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <button type="button" disabled={!marker}
             aria-label={isEs ? `Enfocar a ${agent.name}` : `Focus ${agent.name}`}
+            title={safeStatusText || undefined}
             onClick={() => {
               const viewport = canvasRef.current?.getBoundingClientRect();
               if (marker && viewport) updateCamera(current => focusCrewPoint(current, room, marker, viewport));
