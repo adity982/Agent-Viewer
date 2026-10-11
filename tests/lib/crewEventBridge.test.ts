@@ -3,6 +3,9 @@ import {
   crewAgentActivity,
   crewActivityLine,
   crewInPhoneCall,
+  crewMinimizedCategory,
+  crewSafeSpeechBubble,
+  crewSafeStatusText,
   crewViewerModeLabel,
 } from '../../src/crew/crewEventBridge';
 import type { Meeting, Task } from '../../src/types/agent';
@@ -164,5 +167,91 @@ describe('Línea de actividad y rótulo de modo', () => {
     expect(crewViewerModeLabel('DEMO', true)).toBe('DEMO');
     expect(crewViewerModeLabel('REPLAY', true)).toBe('REPRODUCCIÓN');
     expect(crewViewerModeLabel('REPLAY', false)).toBe('REPLAY');
+  });
+});
+
+describe('Redacción de statusText y speechBubble en modo minimizado (issue #155)', () => {
+  const idleActivity = crewAgentActivity(baseAgent, [], []);
+  const approvalActivity = crewAgentActivity({ ...baseAgent, status: 'WAITING_APPROVAL' as const }, [], []);
+  const meetingActivity = crewAgentActivity({ ...baseAgent, status: 'IN_MEETING' as const }, [], [meeting]);
+  const taskActivity = crewAgentActivity({ ...baseAgent, currentTaskId: 'task-1' }, [task], []);
+  const toolActivity = crewAgentActivity({ ...baseAgent, currentTool: 'bash' }, [], []);
+
+  describe('crewMinimizedCategory: categoría honesta derivada solo de datos estructurados', () => {
+    it('nunca contiene el título real de la tarea ni el tema real de la reunión', () => {
+      expect(crewMinimizedCategory(taskActivity, false, true)).not.toContain('Migrar el bridge de eventos');
+      expect(crewMinimizedCategory(meetingActivity, false, true)).not.toContain('Revisar el puente Crew');
+    });
+
+    it('cubre cada categoría real en español e inglés, con paridad entre ambos', () => {
+      const cases: Array<[typeof idleActivity, boolean, string, string]> = [
+        [approvalActivity, false, 'Espera aprobación', 'Awaiting approval'],
+        [meetingActivity, false, 'En reunión', 'In a meeting'],
+        [taskActivity, false, 'Trabajando en una tarea', 'Working on a task'],
+        [toolActivity, false, 'Usando herramienta', 'Using a tool'],
+        [idleActivity, false, 'Disponible', 'Available'],
+      ];
+      for (const [activity, inCall, es, en] of cases) {
+        expect(crewMinimizedCategory(activity, inCall, true)).toBe(es);
+        expect(crewMinimizedCategory(activity, inCall, false)).toBe(en);
+      }
+    });
+
+    it('una llamada real en curso (#145) produce su propia categoría, nunca inferida de otra señal', () => {
+      expect(crewMinimizedCategory(idleActivity, true, true)).toBe('Llamada en curso');
+      expect(crewMinimizedCategory(idleActivity, true, false)).toBe('On a call');
+    });
+
+    it('respeta una prioridad fija y honesta cuando hay varias señales reales a la vez', () => {
+      // Aprobación pendiente es la señal más urgente: gana incluso si también hay reunión y tarea.
+      const busy = crewAgentActivity({ ...baseAgent, status: 'WAITING_APPROVAL' as const, currentTaskId: 'task-1' }, [task], []);
+      expect(crewMinimizedCategory(busy, true, true)).toBe('Espera aprobación');
+    });
+  });
+
+  describe('crewSafeStatusText: nunca expone Agent.statusText real en modo minimizado', () => {
+    const realStatusText = 'Ejecutando TASK-99: Migrar credenciales de producción';
+
+    it('en modo full devuelve el statusText real sin tocarlo', () => {
+      expect(crewSafeStatusText(realStatusText, taskActivity, false, 'full', true)).toBe(realStatusText);
+    });
+
+    it('en modo minimized sustituye el texto real por la categoría honesta, nunca lo contiene', () => {
+      const safe = crewSafeStatusText(realStatusText, taskActivity, false, 'minimized', true);
+      expect(safe).toBe('Trabajando en una tarea');
+      expect(safe).not.toContain('TASK-99');
+      expect(safe).not.toContain('credenciales');
+    });
+
+    it('en modo minimized sin ninguna actividad real no inventa contenido, solo informa disponibilidad', () => {
+      expect(crewSafeStatusText('', idleActivity, false, 'minimized', true)).toBe('Disponible');
+      expect(crewSafeStatusText('', idleActivity, false, 'minimized', false)).toBe('Available');
+    });
+  });
+
+  describe('crewSafeSpeechBubble: nunca repite el texto real del mensaje en modo minimizado', () => {
+    const realBubble = {
+      text: 'Propongo recortar el alcance de la migración de pagos',
+      expiresAt: 5000,
+      kind: 'proposal' as const,
+    };
+
+    it('en modo full devuelve el globo real sin cambios', () => {
+      expect(crewSafeSpeechBubble(realBubble, meetingActivity, false, 'full', true)).toEqual(realBubble);
+    });
+
+    it('en modo minimized conserva vigencia y tipo reales, pero sustituye el texto por la categoría', () => {
+      const safe = crewSafeSpeechBubble(realBubble, meetingActivity, false, 'minimized', true);
+      expect(safe).not.toBeNull();
+      expect(safe!.text).toBe('En reunión');
+      expect(safe!.text).not.toContain('Propongo');
+      expect(safe!.expiresAt).toBe(5000);
+      expect(safe!.kind).toBe('proposal');
+    });
+
+    it('sin globo real no fabrica uno: minimized devuelve null igual que full', () => {
+      expect(crewSafeSpeechBubble(null, meetingActivity, false, 'minimized', true)).toBeNull();
+      expect(crewSafeSpeechBubble(null, meetingActivity, false, 'full', true)).toBeNull();
+    });
   });
 });

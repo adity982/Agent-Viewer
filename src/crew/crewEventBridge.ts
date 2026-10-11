@@ -114,6 +114,60 @@ export function crewInPhoneCall(agent: Pick<Agent, 'status'>): boolean {
   return agent.status === 'PHONE_CALL';
 }
 
+/**
+ * Categoría honesta y corta para pantallas públicas o televisores (issue #155, brecha de "redacción
+ * de statusText/speechBubble en modo minimizado"). Nunca el título real de la tarea ni el tema real
+ * de la reunión: se deriva solo de señales estructuradas reales del dominio (aprobación pendiente,
+ * llamada telefónica real por `crewInPhoneCall`, reunión ACTIVA real, estado real de la tarea, uso de
+ * herramienta real). Mismo orden de prioridad que `crewActivityLine`, agregando la llamada telefónica
+ * que esa línea no cubre. Sin ninguna señal real, informa disponibilidad real, nunca texto vacío que
+ * sugiera que no se sabe nada.
+ */
+export function crewMinimizedCategory(activity: CrewAgentActivity, inCall: boolean, isEs: boolean): string {
+  if (activity.pendingApproval) return isEs ? 'Espera aprobación' : 'Awaiting approval';
+  if (inCall) return isEs ? 'Llamada en curso' : 'On a call';
+  if (activity.inMeeting) return isEs ? 'En reunión' : 'In a meeting';
+  if (activity.taskStatus) return isEs ? 'Trabajando en una tarea' : 'Working on a task';
+  if (activity.usingTool) return isEs ? 'Usando herramienta' : 'Using a tool';
+  return isEs ? 'Disponible' : 'Available';
+}
+
+/**
+ * `statusText` seguro para Crew (issue #155). En modo `full` es el texto real del agente (el mismo
+ * campo `Agent.statusText` que ya consume Caricatura, que puede incluir título de tarea o reunión).
+ * En modo `minimized` nunca devuelve ese texto real, porque podría filtrar contenido de negocio en
+ * una pantalla pública: lo sustituye por la categoría honesta de `crewMinimizedCategory`, derivada
+ * solo de la actividad real ya calculada por `crewAgentActivity`.
+ */
+export function crewSafeStatusText(
+  realStatusText: string,
+  activity: CrewAgentActivity,
+  inCall: boolean,
+  visibility: CrewVisibility,
+  isEs: boolean,
+): string {
+  return visibility === 'full' ? realStatusText : crewMinimizedCategory(activity, inCall, isEs);
+}
+
+/**
+ * `speechBubble` seguro para Crew (issue #155). En modo `full` se conserva el globo real tal cual
+ * (mismo campo `Agent.speechBubble` que ya consume Caricatura). En modo `minimized` nunca repite el
+ * texto real del mensaje, que puede llevar una propuesta, objeción o decisión de negocio real: si
+ * había un globo activo se conserva su vigencia (`expiresAt`) y su tipo (`kind`), datos reales del
+ * evento, pero el texto se sustituye por la misma categoría honesta. Sin globo real no se fabrica
+ * uno: `minimized` devuelve `null` igual que `full` cuando el agente no tiene nada que decir.
+ */
+export function crewSafeSpeechBubble(
+  realBubble: Agent['speechBubble'],
+  activity: CrewAgentActivity,
+  inCall: boolean,
+  visibility: CrewVisibility,
+  isEs: boolean,
+): Agent['speechBubble'] {
+  if (visibility === 'full' || !realBubble) return realBubble;
+  return { ...realBubble, text: crewMinimizedCategory(activity, inCall, isEs) };
+}
+
 /** Rótulo corto para la insignia LIVE/DEMO/REPLAY que el host puede mostrar en Crew. */
 export function crewViewerModeLabel(mode: CrewViewerMode, isEs: boolean): string {
   switch (mode) {
