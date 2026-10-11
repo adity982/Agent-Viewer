@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CrewView } from './crewModel';
 import { loadCrewSprite } from './crewSprites';
+import { crewSharedImageCache } from './crewAssetCache';
 
 /**
- * La imagen pertenece a la escena montada, sin caché global ni cambios de dominio.
+ * La imagen pertenece a la escena montada; ya no se decodifica de cero en cada
+ * montaje (issue #158, "LRU de assets entre salas"): `loadCrewSprite` reutiliza la
+ * caché compartida `crewSharedImageCache` por clave de vista, acotada a un máximo de
+ * entradas, así que volver a una sala ya visitada no repite la decodificación.
  * `phoneCall` (issue #145) solo tiene efecto sobre la vista `front`: sustituye la pose
  * de pie por `ceo-phone-front` (sosteniendo el teléfono) mientras el agente reporta
  * `PHONE_CALL` real. Las otras tres vistas no tienen arte de teléfono todavía; conservan
@@ -16,10 +20,13 @@ export function useCrewSprite(view: CrewView | null, phoneCall = false) {
     setLoaded(null);
     setFailedView(null);
     if (!view) return;
-    const loadUrl = view === 'front' && phoneCall
+    const phoneFront = view === 'front' && phoneCall;
+    const loadUrl = phoneFront
       ? async () => (await import('./sprites/ceo-phone-front')).default
       : undefined;
-    return loadCrewSprite(view, image => setLoaded({view, image}), () => setFailedView(view), loadUrl);
+    const cacheKey = phoneFront ? 'sprite:front:phone' : `sprite:${view}`;
+    return loadCrewSprite(view, image => setLoaded({view, image}), () => setFailedView(view), loadUrl,
+      undefined, crewSharedImageCache, cacheKey);
   }, [view, phoneCall]);
   return { image: loaded?.view === view ? loaded.image : undefined, failed: view !== null && failedView === view };
 }

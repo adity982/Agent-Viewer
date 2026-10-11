@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { loadCrewPropImage, type CrewPropImageId } from './crewPropImages';
+import { crewSharedImageCache } from './crewAssetCache';
 
-/** La imagen pertenece a la sala montada, sin caché global ni cambios de dominio. */
+/**
+ * La imagen pertenece a la sala montada; ya no se decodifica de cero en cada
+ * montaje (issue #158, "LRU de assets entre salas"): ver el mismo mecanismo y la
+ * misma caché compartida en `useCrewSprite.ts`.
+ */
 function useCrewPropImage(id: CrewPropImageId | null) {
   const [loaded, setLoaded] = useState<{ id: CrewPropImageId; image: HTMLImageElement } | null>(null);
   const [failedId, setFailedId] = useState<CrewPropImageId | null>(null);
@@ -9,7 +14,8 @@ function useCrewPropImage(id: CrewPropImageId | null) {
     setLoaded(null);
     setFailedId(null);
     if (!id) return;
-    return loadCrewPropImage(id, image => setLoaded({ id, image }), () => setFailedId(id));
+    return loadCrewPropImage(id, image => setLoaded({ id, image }), () => setFailedId(id), undefined,
+      undefined, crewSharedImageCache, `prop:${id}`);
   }, [id]);
   return { image: loaded?.id === id ? loaded.image : undefined, failed: id !== null && failedId === id };
 }
