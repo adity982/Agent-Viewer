@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { crewSpriteView, loadCrewSprite } from '../../src/crew/crewSprites';
+import { CrewLruAssetCache } from '../../src/crew/crewAssetCache';
 
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 const fakeImage = () => ({ naturalWidth:256, naturalHeight:352, src:'', onload:null, onerror:null,
@@ -68,5 +69,43 @@ describe('Carga del piloto ilustrado Crew', () => {
     expect(failed).toHaveBeenCalledOnce();
     image.onerror!(new Event('error'));
     expect(failed).toHaveBeenCalledTimes(2);
+  });
+
+  // Caché LRU entre salas (issue #158): pasar una caché explícita es opcional y no
+  // cambia el comportamiento por defecto (todas las pruebas anteriores de este archivo
+  // no la pasan y conservan el comportamiento de siempre, sin ningún reuso).
+  it('con una caché explícita, reutiliza la imagen ya decodificada en vez de crear otra', async () => {
+    const cache = new CrewLruAssetCache<HTMLImageElement>(4);
+    const image = fakeImage(), ready1 = vi.fn(), failed = vi.fn(), url = vi.fn(async () => '/fixture.png');
+    const stop1 = loadCrewSprite('left', ready1, failed, url, () => image, cache, 'sprite:left');
+    await flush();
+    image.onload!(new Event('load'));
+    expect(ready1).toHaveBeenCalledExactlyOnceWith(image);
+    stop1();
+    // La imagen queda viva en la caché: desmontar no le quita el src, a diferencia del
+    // comportamiento sin caché verificado en la primera prueba de este archivo.
+    expect(image.removeAttribute).not.toHaveBeenCalled();
+
+    const create2 = vi.fn(), ready2 = vi.fn(), url2 = vi.fn(async () => '/otra.png');
+    const stop2 = loadCrewSprite('left', ready2, failed, url2, create2, cache, 'sprite:left');
+    await flush();
+    expect(create2).not.toHaveBeenCalled();
+    expect(url2).not.toHaveBeenCalled();
+    expect(ready2).toHaveBeenCalledExactlyOnceWith(image);
+    stop2();
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it('con una caché explícita, una vista distinta sigue cargando de cero (claves separadas)', async () => {
+    const cache = new CrewLruAssetCache<HTMLImageElement>(4);
+    const imageLeft = fakeImage(), ready = vi.fn();
+    loadCrewSprite('left', ready, vi.fn(), async () => '/left.png', () => imageLeft, cache, 'sprite:left');
+    await flush();
+    imageLeft.onload!(new Event('load'));
+
+    const createRight = vi.fn(fakeImage), readyRight = vi.fn();
+    loadCrewSprite('right', readyRight, vi.fn(), async () => '/right.png', createRight, cache, 'sprite:right');
+    await flush();
+    expect(createRight).toHaveBeenCalledOnce();
   });
 });

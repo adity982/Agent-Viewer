@@ -1,4 +1,5 @@
 import { loadCrewImage } from './crewSprites';
+import type { CrewLruAssetCache } from './crewAssetCache';
 
 /**
  * Piloto acotado de #115: imágenes reales del banco Crew para DOS muebles
@@ -31,9 +32,14 @@ export const CREW_ROOM_PROP_IMAGES: Readonly<Record<string, CrewPropImageId>> = 
   'ceo-plant': 'plant-floor',
 };
 
-/** Carga la imagen real de un mueble del banco; cancela si la sala cambia antes de resolver. */
+/**
+ * Carga la imagen real de un mueble del banco; cancela si la sala cambia antes de
+ * resolver. `cache`/`cacheKey` son opcionales (issue #158, "LRU de assets entre
+ * salas"): ver `loadCrewImage` en `crewSprites.ts` para el detalle del reuso.
+ */
 export function loadCrewPropImage(id: CrewPropImageId, ready: (image: HTMLImageElement) => void,
   failed: () => void, loadUrl = async (propId: CrewPropImageId) => (await sources[propId]()).default,
-  createImage = () => new Image()): () => void {
-  return loadCrewImage(() => loadUrl(id), CREW_PROP_IMAGE_SIZE[id], ready, failed, createImage);
+  createImage = () => new Image(), cache?: CrewLruAssetCache<HTMLImageElement>,
+  cacheKey: string = `prop:${id}`): () => void {
+  return loadCrewImage(() => loadUrl(id), CREW_PROP_IMAGE_SIZE[id], ready, failed, createImage, cache, cacheKey);
 }

@@ -1,8 +1,11 @@
 # Rendimiento y memoria del renderer Crew (issue #158)
 
 Este documento describe las herramientas de medicion de rendimiento del
-renderer Crew existente (`src/crew/`) y los umbrales propuestos para
-aceptarlo. No crea arte ni escenas nuevas: mide lo que ya existe.
+renderer Crew existente (`src/crew/`), los umbrales propuestos para
+aceptarlo, y dos mecanismos que el propio renderer aplica para acotar su
+costo: una cache LRU de assets decodificados entre salas, y culling de
+actores/mobiliario fuera del area visible de la camara. No crea arte ni
+escenas nuevas.
 
 ## Punto de partida verificado
 
@@ -133,6 +136,84 @@ V-Sync, no un techo del renderer. Lo relevante para el issue es que no cae
 por debajo del piso de 30 FPS en ninguna sala con la interaccion simulada, y
 que el heap no crece de forma sostenida al cambiar de sala.
 
+## 5. Cache LRU de assets entre salas (`src/crew/crewAssetCache.ts`)
+
+El issue pide explicitamente "LRU de assets entre salas". Antes de esta
+entrega no existia ninguna: `loadCrewSprite`/`loadCrewPropImage` creaban un
+`HTMLImageElement` nuevo y lo descartaban (`removeAttribute('src')`) cada vez
+que una escena se desmontaba, aunque fuera exactamente la misma orientacion
+de sprite o el mismo mueble ya visto antes (asi lo documentaban los
+comentarios "sin cache global, sin cambios de dominio" que tenian
+`useCrewSprite.ts`/`useCrewPropImages.ts`, una decision deliberada de
+simplicidad en su momento, no un error).
+
+`CrewLruAssetCache<T>` es una estructura pura (sin DOM, sin temporizadores)
+con `get`/`set`/`delete`/`clear`, capacidad fija y una funcion `onEvict`
+opcional que libera la imagen desalojada (`onload`/`onerror`/`src`). Una
+unica instancia compartida (`crewSharedImageCache`, capacidad 24) se usa
+desde `useCrewSprite.ts` (claves `sprite:<vista>` o `sprite:front:phone`) y
+`useCrewPropImages.ts` (claves `prop:<id>`), acotando cuantas imagenes
+decodificadas de Crew quedan vivas a la vez sin importar cuantas veces se
+cambie de sala. `loadCrewSprite`/`loadCrewPropImage`/`loadCrewImage` reciben
+`cache`/`cacheKey` como parametros opcionales: sin ellos (todas las llamadas
+directas existentes en las pruebas previas a este issue) el comportamiento
+es exactamente el de siempre, sin ningun reuso.
+
+Pruebas: `tests/lib/crewAssetCache.test.ts` (estructura LRU pura: hit/miss,
+desalojo del menos recientemente usado, promocion al leer, actualizacion sin
+desalojo, `delete`/`clear`, capacidad minima de 1), mas casos agregados en
+`tests/lib/crewSprites.test.ts`, `tests/lib/crewPropImages.test.ts`,
+`tests/lib/useCrewSprite.test.tsx` y el nuevo `tests/lib/useCrewPropImages.test.tsx`
+(reuso real end-to-end: montar, decodificar, desmontar, volver a montar la
+misma vista o el mismo mueble sin una segunda llamada a `createImage`).
+
+## 6. Culling de actores y mobiliario fuera de vista (`src/crew/crewCulling.ts`)
+
+El issue tambien pide explicitamente "batch/culling de actores/particulas".
+Antes de esta entrega, `renderCrewRoom` recorria y dibujaba TODO el
+mobiliario y TODOS los marcadores de la sala activa sin importar el zoom/pan
+de la camara: con la camara acercada o desplazada, los items completamente
+fuera del lienzo igual emitian su `drawImage`/`fillText`.
+
+`crewVisibleLocalBounds`/`crewIsPointCulled` son funciones puras que
+calculan, en el mismo espacio de coordenadas locales que usa `crewIsoPoint`/
+`crewGeometryBounds` (antes de `ctx.translate`/`ctx.scale`), el area
+realmente visible dado el encuadre de camara actual (ancho/alto del lienzo,
+`fit`, `zoom`, `pan` y el centro de la geometria), expandida por un margen
+fijo (`CREW_CULL_MARGIN = 160`, en las mismas unidades locales) que cubre el
+alto real de un sprite dibujado sobre su ancla mas la insignia de presencia
+sobre el, para que nada aparezca o desaparezca de golpe mientras siga
+parcialmente en pantalla. `renderCrewRoom` calcula esa area una sola vez por
+cuadro y filtra furniture y marcadores contra ella antes de ordenar y de
+dibujar: lo que cae fuera no emite ningun `drawImage`/`fillText`.
+
+No existe ningun sistema de particulas en el renderer actual (solo hay un
+sprite ilustrado real, el del CEO; el resto de roles son marcadores
+circulares y el mobiliario son cajas 2.5D o, para dos muebles de Direccion,
+imagenes reales); el culling se aplica por igual a actores y a mobiliario,
+que es todo lo que existe para cullear hoy. Tampoco se implemento ningun
+"batch" de llamadas de dibujo (agrupar sprites que comparten textura): con
+el catalogo actual (un solo sprite ilustrado) no hay nada que agrupar que no
+sea ya un unico `drawImage` por actor; seria trabajo prematuro sin arte real
+de mas roles (#118-#123).
+
+Pruebas: `tests/lib/crewCulling.test.ts` (calculo puro del area visible con
+zoom/pan/margen, inclusion de los bordes, los cuatro lados de exclusion) y
+tres casos nuevos en `tests/lib/renderCrewRoom.test.ts` (un agente
+absurdamente lejos nunca se dibuja; un agente cerca del borde de la sala,
+visible a zoom normal, queda fuera de vista al acercar la camara mientras
+otro cerca del centro sigue visible; un mueble real (imagen del banco) se
+excluye del dibujo bajo el mismo mecanismo).
+
+El presupuesto JS de la seccion 1 ya pasaba comodamente antes de este
+cambio (0.004-0.42ms contra 8ms de presupuesto) porque el catalogo actual
+solo dibuja marcadores circulares y cajas simples; el culling no fue
+necesario para pasar ese presupuesto con 50 agentes sinteticos, pero sigue
+siendo el mecanismo que el issue exige explicitamente para cuando existan
+mas assets reales por actor/mueble (atlas de mas roles, pantallas con
+contenido real, etc.) y para salas grandes vistas con zoom alto, donde
+dibujar lo que esta fuera del encuadre deja de ser gratis.
+
 ## Umbrales propuestos (para acordar, no un hecho previo del equipo)
 
 | Metrica | Objetivo | Piso | Donde se mide |
@@ -151,10 +232,14 @@ que el heap no crece de forma sostenida al cambiar de sala.
   disponible en este entorno. `crew:perf:browser` corre igual en un Chromium
   de escritorio emulado a resolucion movil, pero eso no sustituye hardware
   real).
-- Compresion GPU/Canvas, LRU de assets entre salas, culling de particulas:
-  hoy no existen en el renderer (solo hay un sprite ilustrado, el del CEO), y
-  crearlos es trabajo de arte/renderer de otros issues (#167, #169, #117,
-  #130), no de este issue de medicion.
+- Compresion GPU/Canvas: el renderer sigue usando Canvas2D con imagenes
+  PNG/SVG decodificadas tal cual (sin atlas comprimido ni texturas GPU); no
+  hay evidencia de que haga falta con el catalogo actual (ver seccion 6), y
+  cambiar de formato es decision de pipeline de arte (#117), no de este
+  issue de medicion.
+- Batch de llamadas de dibujo (agrupar sprites que comparten una misma
+  textura/atlas): no implementado; con un solo sprite ilustrado real en todo
+  el catalogo no hay nada que agrupar todavia (ver seccion 6).
 - Certificacion G1 de Crew: sigue pendiente arte final, animaciones de
   trabajo y los 50 agentes globales reales del issue (aqui se estresa con
   marcadores sinteticos, no con el flujo completo del dominio).

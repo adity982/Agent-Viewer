@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CREW_PROP_IMAGE_SIZE, CREW_ROOM_PROP_IMAGES, loadCrewPropImage } from '../../src/crew/crewPropImages';
+import { CrewLruAssetCache } from '../../src/crew/crewAssetCache';
 
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 const fakeImage = (width: number, height: number) => ({ naturalWidth: width, naturalHeight: height, src: '',
@@ -68,5 +69,28 @@ describe('Imágenes reales de mobiliario Crew (#115)', () => {
     await flush();
     image.onerror!(new Event('error'));
     expect(failed).toHaveBeenCalledOnce();
+  });
+
+  // Caché LRU entre salas (issue #158): opcional, no cambia el comportamiento de las
+  // pruebas anteriores de este archivo (ninguna la pasa).
+  it('con una caché explícita, reutiliza la imagen del mueble ya decodificada entre salas', async () => {
+    const cache = new CrewLruAssetCache<HTMLImageElement>(4);
+    const size = CREW_PROP_IMAGE_SIZE['desk-executive'];
+    const image = fakeImage(size.width, size.height);
+    const ready1 = vi.fn(), failed = vi.fn(), url = vi.fn(async () => '/fixture-desk.svg');
+    const stop1 = loadCrewPropImage('desk-executive', ready1, failed, url, () => image, cache, 'prop:desk-executive');
+    await flush();
+    image.onload!(new Event('load'));
+    expect(ready1).toHaveBeenCalledExactlyOnceWith(image);
+    stop1();
+    expect(image.removeAttribute).not.toHaveBeenCalled(); // la caché conserva la imagen viva
+
+    const create2 = vi.fn(), ready2 = vi.fn();
+    const stop2 = loadCrewPropImage('desk-executive', ready2, failed, vi.fn(async () => '/otra.svg'), create2, cache, 'prop:desk-executive');
+    await flush();
+    expect(create2).not.toHaveBeenCalled();
+    expect(ready2).toHaveBeenCalledExactlyOnceWith(image);
+    stop2();
+    expect(failed).not.toHaveBeenCalled();
   });
 });
