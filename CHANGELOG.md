@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-12
+
+"Captura automática e interoperabilidad" (automatic capture and interoperability): an OTLP/HTTP GenAI traces
+receiver and file import, packaged LangGraph and OpenAI Agents SDK adapters tested against the real
+frameworks in CI, a durable local queue in both SDKs, and a Prometheus `/metrics` export (core endpoint,
+ledger-derived families, in-process ingestion counters, optional OTLP metrics push).
+
+### Upgrading
+
+Purely additive: no breaking change to the event contract, the HTTP API, or the embeddable library's props.
+Every new setting defaults to off or to its existing behavior, so an existing deployment needs no
+configuration change to keep working.
+
+- The SDK durable queue (Python `spool_dir=...`, TypeScript `spoolDir`/`AGENT_VIEWER_SPOOL_DIR`) is opt-in:
+  without it, both SDKs behave exactly as before (an unrecovered transient failure still raises/throws).
+- `GET /metrics` is opt-in (`AGENT_VIEWER_METRICS=1`, CLI `--metrics`); unset, the route answers `404`
+  exactly like before this release. See [docs/metrics.md](docs/metrics.md) for every new environment
+  variable it reads.
+- The OTLP traces receiver (`POST /v1/traces`) and file import share the existing OTLP auth, rate limit and
+  size-limit settings already in place for `/v1/logs`/`/v1/metrics`; no new required variable.
+- `examples/openai-agents-adapter/` is removed (dead code since issue #361); import
+  `@warlockcode/agent-viewer-openai-agents` instead if anything in your own tree still referenced that path
+  (see the Removed section below).
+
 ### Added
 
 - **Hash chain over stored events (issue #105, v0.8.0 milestone, first item of the formal-audit theme)**: every SQLite-stored event now joins a SHA-256 hash chain, written inside the same transaction as its insert, so an edit, deletion or reordering of a chained row changes a hash that every later row already committed to. New pure module `server/chain.ts` (`canonicalize`, `eventHash`, `checkpointHash`, `UnchainedDigest`), a JSON Canonicalization Scheme (RFC 8785) implementation with golden test vectors (`tests/fixtures/chain-vectors.json`) for cross-language verification. New migration 17 (`event-hash-chain`): `events.prev_hash`/`hash`/`submitter_id` columns (reusing the existing `seq` column as the chain's position), a `chain_checkpoints` table recording a one-time `genesis` checkpoint over every pre-chain row (a single digest, not fabricated per-row hashes) and a `resume` checkpoint if an older server appends unchained rows after an upgrade, and a defense-in-depth `events_immutable` trigger. New read-only `GET /api/v1/audit/chain` endpoint, `?include=chain` on `GET /api/v1/events`, and an optional `chain` receipt on accepted ingestion responses (SQLite mode only). `submitter_id` is recorded on every physically stored row, derived from how the request authenticated (shared token, open API, webhook HMAC, or the request behind a server-generated event), never from token material. Memory mode is explicitly not tamper-evident (`GET /api/v1/audit/chain` reports `enabled: false`, logged once at startup). New `docs/audit-chain.md` documents the format, the genesis/resume checkpoint mechanics, and the honest scope of the guarantee (not a defense against a consistent rewrite by someone with full file write access, without an external anchor; #106 adds signed checkpoints for that). New `scripts/bench-ingest.ts` (not part of CI) measures sequential ingestion throughput. Verifying the chain, signed checkpoints, named ingestion keys, scoped keys, chain-compatible retention and the offline audit bundle are separate items (#106 to #111).
@@ -29,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - import { LangGraphViewerAdapter } from './langgraph-adapter';
   + import { AgentViewerCallbackHandler } from '@warlockcode/agent-viewer-langgraph';
   + await graph.invoke(inputs, { callbacks: [new AgentViewerCallbackHandler({ runtimeId: 'my-graph' })] });
+  ```
+
+- **`examples/openai-agents-adapter/` (issue #104)**: dead code left behind when issue #361 moved this adapter into the published workspace package. Nothing imported it (`tests/examples-adapters.test.mjs`'s own doc comment already said the case was removed in favor of `tests/openai-agents-adapter.test.mjs`), so it only duplicated `packages/openai-agents/src/processor.ts` with a stale doc comment. To migrate, import from the package instead:
+
+  ```diff
+  - import { AgentViewerTracingProcessor } from './openai-agents-adapter/processor';
+  + import { AgentViewerTracingProcessor } from '@warlockcode/agent-viewer-openai-agents';
   ```
 
 ## [0.6.0] - 2026-10-11
