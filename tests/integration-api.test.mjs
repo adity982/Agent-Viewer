@@ -91,9 +91,10 @@ test('REST API: /ready includes schema info only when SQLite is the active store
       // 10 (usage-ledger-summary, issue #69), 11 (rollup-attribution, issue #80), 12 (usage-ledger-estimates,
       // issue #84), 13 (pricing-recompute, issue #296), 14 (budgets, issue #303), 15 (budget-alerts, issue #319),
       // 16 (budget-alert-deliveries, issue #321), 17 (event-hash-chain, issue #105, the hash-chain columns and
-      // the chain_checkpoints table) and 18 (audit-meta, issue #106): the latest, the audit instance id table.
-      schemaVersion: 18,
-      latestKnownSchemaVersion: 18,
+      // the chain_checkpoints table), 18 (audit-meta, issue #106, the audit instance id table) and 19
+      // (api-keys, issue #107): the latest, adding the api_keys table and the submitter_id index.
+      schemaVersion: 19,
+      latestKnownSchemaVersion: 19,
       appliedAt: ready.database.appliedAt,
     });
     assert.equal(typeof ready.database.appliedAt, 'number');
@@ -1742,7 +1743,7 @@ test('REST API (issue #105, SQLite mode): audit/chain, include=chain, ingestion 
 
     assert.deepEqual(out.includeChainBody.events, out.includeChainBody.events);
     assert.ok(out.includeChainBody.chain.evt_chain_single);
-    assert.equal(out.includeChainBody.chain.evt_chain_single.submitterId, 'shared-token');
+    assert.equal(out.includeChainBody.chain.evt_chain_single.submitterId, 'bootstrap');
     assert.equal(out.includeChainBody.chain.evt_chain_batch_1.prevHash, out.includeChainBody.chain.evt_chain_single.hash);
 
     assert.equal(out.readyBody.chain, 'enabled');
@@ -1750,7 +1751,7 @@ test('REST API (issue #105, SQLite mode): audit/chain, include=chain, ingestion 
     // submitter_id for a server-generated event (POST /api/v1/agents) follows the request's own auth.
     const db = new DatabaseSync(path.join(dir, 'chain.db'));
     const row = db.prepare("SELECT submitter_id FROM events WHERE type = 'agent.registered' AND agent_id = 'agent_chain_test'").get();
-    assert.equal(row.submitter_id, 'shared-token');
+    assert.equal(row.submitter_id, 'bootstrap');
     db.close();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
