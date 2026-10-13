@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET /api/v1/audit/verify`/`agent-viewer verify` are now tombstone-aware (issue #408, v0.8.0 milestone)**: a row legitimately tombstoned by issue #109's retention/redaction routes rewrites its own `event_json` by design, so it never recomputes to its own stored `hash` again; before this fix `server/audit/verify.ts`'s walk had no tombstone handling at all and reported `hash_mismatch` at the first such row, indistinguishable from real tampering, contradicting #109's and the 0.8.0 exit criterion's stated goal ("after a retention purge the chain still verifies through tombstones"). The walk now skips the content-hash recompute for a row with `tombstoned_at IS NOT NULL` (its link to the previous row is still checked normally, since links are never touched by a tombstone) and instead cross-checks it against the chained `audit.retention.purged`/`audit.redaction.applied` event its `tombstone_audit_seq` names: that event must exist, be of the right type, and have committed exactly this row's original `hash`/`content_hash`, or the new `tombstone_invalid` `BreakKind` is reported (a forged or missing tombstone is not a silent pass). Mirrors the logic `scripts/verify-audit-bundle.mjs`'s `REDACTION` check (#401) already implemented and `tests/audit-retention.test.mjs`'s `tombstoneAwareWalk` helper already pinned in tests. `docs/audit-chain.md` gains a "Tombstones do not break verification" section; `docs/retention.md`'s "Known limits" entry for this gap is removed (closed, not reworded); `docs/threat-model.md`'s "what the chain does not prove" bullet about this gap moves to "what the chain proves", corrected. New tests in `tests/audit-verify.test.mjs`: a clean tombstoned chain, a tombstone pointing nowhere, one pointing at a real but unrelated row, and one whose committing audit event records the wrong original hash.
+
 ### Added
 
 - **Migration guide from the single shared token (issue #409, sub-issue of #111, docs only)**: new
